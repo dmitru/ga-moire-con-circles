@@ -38,7 +38,7 @@ class State {
   };
 
   addCircle = (x: number, y: number, r: number, vx = 0, vy = 0) => {
-    this.circles.push({
+    const c: Circle = {
       x,
       y,
       r,
@@ -46,23 +46,25 @@ class State {
       vy,
       period: random(1, 2),
       phase: random(0, Math.PI * 2),
-    });
+    };
+    this.circles.push(c);
+    return c;
   };
 
   addRandomCircle = (r = 0.1) => {
     const x = random(0.3, 1 - 0.3);
     const y = random(0.3, 1 - 0.3);
-    const v = 1e-4;
-    const vx = v * random(-1, 1);
-    const vy = v * random(-1, 1);
-    this.addCircle(x, y, r, vx, vy);
+    const v = 1e-4 * 2;
+    const vx = v * random(0.7, 1) * (random(0, 1) > 0.5 ? 1 : -1);
+    const vy = v * random(0.7, 1) * (random(0, 1) > 0.5 ? 1 : -1);
+    return this.addCircle(x, y, r, vx, vy);
   };
 
   addRandomCircleAt = (x: number, y: number, r = 0.1) => {
     const v = 1e-4;
     const vx = v * random(-1, 1);
     const vy = v * random(-1, 1);
-    this.addCircle(x, y, r, vx, vy);
+    return this.addCircle(x, y, r, vx, vy);
   };
 }
 
@@ -81,8 +83,46 @@ const render = ({
   ctx.fillStyle = "black";
   ctx.fillRect(0, 0, w, h);
 
-  const interpLin = (points: [number, number][]) => {
+  const interpolateLinearly = (
+    x: number,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number
+  ) => {
+    const m = (y2 - y1) / (x2 - x1);
+    const b = y1 - m * x1;
+    return m * x + b;
+  };
+
+  const interpolateExponentially = (
+    x: number,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number
+  ) => {
+    // interpolate between 2 points exponentially
+    // x1, y1 are the start point
+    // x2, y2 are the end point
+    // x is the value to interpolate
+    // y1 and y2 must be positive
+    // x1 and x2 must be positive
+    // x must be between x1 and x2
+    // y = y1 * (y2 / y1) ** ((x - x1) / (x2 - x1))
+    const y = y1 * (y2 / y1) ** ((x - x1) / (x2 - x1));
+    return y;
+  };
+
+  const interpol = (
+    points: [number, number][],
+    type: "lin" | "exp" = "lin"
+  ) => {
     // return a function that interpolates linearly between the given points
+
+    let interpolate =
+      type === "lin" ? interpolateLinearly : interpolateExponentially;
+
     return (x: number) => {
       if (x >= points[points.length - 1][0]) {
         return points[points.length - 1][1];
@@ -99,50 +139,58 @@ const render = ({
       }
       const [x1, y1] = p1;
       const [x2, y2] = p2;
-      const m = (y2 - y1) / (x2 - x1);
-      const b = y1 - m * x1;
-      return m * x + b;
+      return interpolate(x, x1, y1, x2, y2);
     };
   };
   // window["interpLin"] = interpLin;
 
-  const distToA = interpLin([
-    [0, 0.1],
-    [0.3, 1],
-    // [0.4, 0.3],
-    [0.5, 0.1],
-    // [0.5, 1],
-    // [1, 0],
-  ]);
+  let brightest = 0.0 + (state.t * 1e-3) / 2;
+  const distToA = interpol(
+    [
+      [0, 1],
+      // [brightest - 0.1, 0.5],
+      [brightest, 1],
+      [brightest + 0.2, 0.5],
+      // [0.4, 0.3],
+      [brightest + 0.5, 0.1],
+      // [0.5, 1],
+      // [1, 0],
+    ],
+    "exp"
+  );
 
-  const perdiodToA = interpLin([
-    [-1, 0.8],
-    [1, 1],
-  ]);
+  const perdiodToA = interpol(
+    [
+      [-1, 0.001],
+      [1, 0.5],
+    ],
+    "exp"
+  );
 
   // get grayscale hex color from a number between 0 and 1
   const gray = (x: number) => {
     return chroma.rgb(255, 255, 255, x).hex();
   };
 
-  let offset = 0.0 * state.t;
-  let width = 0.01 / 4;
-  let space = width;
-
   ctx.imageSmoothingEnabled = true;
   ctx.imageSmoothingQuality = "high";
 
   ctx.strokeStyle = "white";
-  ctx.lineWidth = width * d;
 
   for (let stripeIdx = 0; stripeIdx < 300; stripeIdx++) {
     for (const circle of state.circles) {
-      const a = perdiodToA(
-        Math.sin(circle.phase + circle.period * state.t * 0.003)
-      );
-      if (a > 1 || a < 0) {
-        debugger;
-      }
+      let offset = 0.0 * state.t;
+      let width = 0.01 / 4;
+      let space = width * (1.1 + stripeIdx / 300);
+      ctx.lineWidth = width * d;
+
+      const a =
+        circle.period === 0
+          ? 1
+          : perdiodToA(
+              Math.sin(circle.phase + circle.period * state.t * 0.003)
+            );
+
       // console.log(
       //   "circle.period * state.t * 0.001",
       //   circle.period * state.t * 0.001
@@ -184,9 +232,8 @@ export function App() {
       let x = random(0.3, 1 - 0.3);
       let y = random(0.3, 1 - 0.3);
       const dx = 0.05;
-      for (let i = 0; i < circlesCount; i++) {
-        state.addRandomCircleAt(x + random(-dx, dx), y + random(-dx, dx));
-      }
+
+      state.addRandomCircleAt(x + random(-dx, dx), y + random(-dx, dx));
 
       render({
         to: canvas,
@@ -196,9 +243,28 @@ export function App() {
 
     const randomizeAndAnimate = () => {
       const state = new State();
-      for (let i = 0; i < Math.round(random(2, 3)); i++) {
-        state.addRandomCircle();
-      }
+      let x = random(0.3, 1 - 0.3);
+      let y = random(0.3, 1 - 0.3);
+      const dx = 0.05;
+
+      const c1 = state.addRandomCircleAt(
+        x + random(-dx, dx),
+        y + random(-dx, dx)
+      );
+      const c2 = state.addRandomCircleAt(
+        x + random(-dx, dx),
+        y + random(-dx, dx)
+      );
+      // const c3 = state.addRandomCircleAt(random(0, 1), random(0, 1));
+      // const c4 = state.addRandomCircleAt(random(0, 1), random(0, 1));
+
+      c1.phase = 0;
+      c2.phase = 0;
+
+      c1.period = 0;
+      c2.period = 0;
+      // c3.period = 2;
+      // c4.period = 2;
 
       let stopped = false;
 
@@ -225,7 +291,10 @@ export function App() {
       };
     };
 
-    const sceneTimeoutMs = 1 * 1000;
+    const bpmToMs = (bpm: number) => {
+      return (60 * 1000) / bpm;
+    };
+    const sceneTimeoutMs = bpmToMs(120 / 4);
 
     let clearScene = () => {};
 
