@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "canvas-capture": "^2.0.6",
     "chroma-js": "^2.4.2",
     "preact": "^10.11.3"
   },

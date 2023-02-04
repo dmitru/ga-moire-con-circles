@@ -1,7 +1,44 @@
 import { useEffect, useState } from "preact/hooks";
-import preactLogo from "./assets/preact.svg";
 import "./app.css";
 import chroma from "chroma-js";
+import { CanvasCapture } from "canvas-capture";
+
+const bpmToMs = (bpm: number) => {
+  return (60 * 1000) / bpm;
+};
+
+const sceneTimeoutMs = bpmToMs(120) * 16;
+
+const initCanvasCapture = (canvas: HTMLCanvasElement) => {
+  // Initialize and pass in canvas.
+  CanvasCapture.init(
+    canvas,
+    { showRecDot: true } // Options are optional, more info below.
+  );
+
+  // Bind key presses to begin/end recordings.
+  CanvasCapture.bindKeyToVideoRecord("v", {
+    format: "webm",
+    name: "myVideo",
+    quality: 1,
+    fps: 30,
+  });
+  CanvasCapture.bindKeyToGIFRecord("g");
+  // Download a series of frames as a zip.
+  CanvasCapture.bindKeyToPNGFramesRecord("f", {
+    onExportProgress: (progress) => {
+      // Options are optional, more info below.
+      console.log(`Zipping... ${Math.round(progress * 100)}% complete.`);
+    },
+  }); // Also try bindKeyToJPEGFramesRecord().
+
+  // These methods immediately save a single snapshot on keydown.
+  CanvasCapture.bindKeyToPNGSnapshot("p");
+  // CanvasCapture.bindKeyToJPEGSnapshot("j", {
+  //   name: "myJpeg", // Options are optional, more info below.
+  //   quality: 0.8,
+  // });
+};
 
 // random number between two given numbers
 const random = (min: number, max: number) => {
@@ -21,10 +58,6 @@ type Circle = {
   vy: number;
   period: number;
   phase: number;
-};
-
-const bpmToMs = (bpm: number) => {
-  return (60 * 1000) / bpm;
 };
 
 class State {
@@ -175,7 +208,7 @@ const render = ({
 
   // get grayscale hex color from a number between 0 and 1
   const gray = (x: number) => {
-    return chroma.rgb(255, 255, 255, x).hex();
+    return chroma.gl(1, 1, 1, x).hex();
   };
 
   ctx.imageSmoothingEnabled = true;
@@ -186,7 +219,7 @@ const render = ({
   for (let stripeIdx = 0; stripeIdx < 300; stripeIdx++) {
     for (const circle of state.circles) {
       let offset = 0.0 * state.t;
-      let width = 0.01 / 5;
+      let width = 0.01 / 0.3;
       let space = width * (1 + stripeIdx / 200);
       ctx.lineWidth = width * d;
 
@@ -200,13 +233,13 @@ const render = ({
       const dd = 0;
       a *= interpol(
         [
-          [0, 0.1],
-          [bpmToMs(60) * dd, 1],
-          [bpmToMs(60) * (4 - dd), 1],
-          [bpmToMs(60) * 4, 0],
+          [0, 0],
+          [0.1, 1],
+          [0.9, 1],
+          [1, 0],
         ],
         "lin"
-      )(state.t);
+      )(state.t / sceneTimeoutMs);
       // console.log(state.t);
 
       // console.log(
@@ -243,6 +276,8 @@ export function App() {
     const canvas = document.getElementById("canvas") as HTMLCanvasElement;
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
+
+    initCanvasCapture(canvas);
 
     const randomizeAndRender = () => {
       const state = new State();
@@ -306,6 +341,13 @@ export function App() {
           to: canvas,
           state,
         });
+
+        CanvasCapture.checkHotkeys();
+
+        // You need to call recordFrame() only if you are recording
+        // a video, gif, or frames.
+        if (CanvasCapture.isRecording()) CanvasCapture.recordFrame();
+
         requestAnimationFrame(raf);
       };
 
@@ -315,8 +357,6 @@ export function App() {
         stopped = true;
       };
     };
-
-    const sceneTimeoutMs = bpmToMs(60 / 4);
 
     let clearScene = () => {};
 
