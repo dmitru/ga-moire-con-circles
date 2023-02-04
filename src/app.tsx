@@ -219,7 +219,7 @@ const render = ({
   for (let stripeIdx = 0; stripeIdx < 300; stripeIdx++) {
     for (const circle of state.circles) {
       let offset = 0.0 * state.t;
-      let width = 0.01 / 0.3;
+      let width = 0.01 / 6;
       let space = width * (1 + stripeIdx / 200);
       ctx.lineWidth = width * d;
 
