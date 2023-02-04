@@ -2,43 +2,62 @@ import { useEffect, useState } from "preact/hooks";
 import "./app.css";
 import chroma from "chroma-js";
 import { CanvasCapture } from "canvas-capture";
+import { SocketIO } from "./lib/socket";
+import { interpol } from "./lib/interpolate";
+
+class ADEnv {
+  attack: number;
+  decay: number;
+
+  constructor(props: { attack: number; decay: number }) {
+    this.attack = props.attack;
+    this.decay = props.decay;
+  }
+
+  update = (dt: number) => {
+    this.t += dt;
+  };
+
+  tReleased: number = 0;
+  t = 0;
+  gate = false;
+
+  trigger = () => {
+    this.gate = true;
+    this.t = 0;
+    this.tReleased = 0;
+  };
+  release = () => {
+    this.gate = false;
+    this.tReleased = this.t;
+  };
+
+  get value() {
+    if (this.gate) {
+      return interpol(
+        [
+          [0, 0],
+          [this.attack, 1],
+        ],
+        "lin"
+      )(this.t);
+    } else {
+      return interpol(
+        [
+          [0, 1],
+          [this.decay, 0],
+        ],
+        "lin"
+      )(this.t - this.tReleased);
+    }
+  }
+}
 
 const bpmToMs = (bpm: number) => {
   return (60 * 1000) / bpm;
 };
 
 const sceneTimeoutMs = bpmToMs(120) * 16;
-
-const initCanvasCapture = (canvas: HTMLCanvasElement) => {
-  // Initialize and pass in canvas.
-  CanvasCapture.init(
-    canvas,
-    { showRecDot: true } // Options are optional, more info below.
-  );
-
-  // Bind key presses to begin/end recordings.
-  CanvasCapture.bindKeyToVideoRecord("v", {
-    format: "webm",
-    name: "myVideo",
-    quality: 1,
-    fps: 30,
-  });
-  CanvasCapture.bindKeyToGIFRecord("g");
-  // Download a series of frames as a zip.
-  CanvasCapture.bindKeyToPNGFramesRecord("f", {
-    onExportProgress: (progress) => {
-      // Options are optional, more info below.
-      console.log(`Zipping... ${Math.round(progress * 100)}% complete.`);
-    },
-  }); // Also try bindKeyToJPEGFramesRecord().
-
-  // These methods immediately save a single snapshot on keydown.
-  CanvasCapture.bindKeyToPNGSnapshot("p");
-  // CanvasCapture.bindKeyToJPEGSnapshot("j", {
-  //   name: "myJpeg", // Options are optional, more info below.
-  //   quality: 0.8,
-  // });
-};
 
 // random number between two given numbers
 const random = (min: number, max: number) => {
@@ -58,11 +77,15 @@ type Circle = {
   vy: number;
   period: number;
   phase: number;
+  id?: number;
+  env: ADEnv;
 };
 
 class State {
   t = 0;
   circles: Circle[] = [];
+  attackMs = 50;
+  decayMs = 400;
 
   // update positions of circles based on their vx, vy velocities
   update = (dt: number) => {
@@ -72,6 +95,7 @@ class State {
     for (const circle of this.circles) {
       circle.x += circle.vx;
       circle.y += circle.vy;
+      circle.env.update(dt);
     }
   };
 
@@ -84,7 +108,9 @@ class State {
       vy,
       period: random(1, 2),
       phase: random(0, Math.PI * 2),
+      env: new ADEnv({ attack: this.attackMs, decay: this.decayMs }),
     };
+    c.env.trigger();
     this.circles.push(c);
     return c;
   };
@@ -121,82 +147,7 @@ const render = ({
   ctx.fillStyle = "black";
   ctx.fillRect(0, 0, w, h);
 
-  const interpolateLinearly = (
-    x: number,
-    x1: number,
-    y1: number,
-    x2: number,
-    y2: number
-  ) => {
-    const m = (y2 - y1) / (x2 - x1);
-    const b = y1 - m * x1;
-    return m * x + b;
-  };
-
-  const interpolateExponentially = (
-    x: number,
-    x1: number,
-    y1: number,
-    x2: number,
-    y2: number
-  ) => {
-    // interpolate between 2 points exponentially
-    // x1, y1 are the start point
-    // x2, y2 are the end point
-    // x is the value to interpolate
-    // y1 and y2 must be positive
-    // x1 and x2 must be positive
-    // x must be between x1 and x2
-    // y = y1 * (y2 / y1) ** ((x - x1) / (x2 - x1))
-    const y = y1 * (y2 / y1) ** ((x - x1) / (x2 - x1));
-    return y;
-  };
-
-  const interpol = (
-    points: [number, number][],
-    type: "lin" | "exp" = "lin"
-  ) => {
-    // return a function that interpolates linearly between the given points
-
-    let interpolate =
-      type === "lin" ? interpolateLinearly : interpolateExponentially;
-    interpolate = interpolateLinearly;
-
-    return (x: number) => {
-      if (x >= points[points.length - 1][0]) {
-        return points[points.length - 1][1];
-      }
-      if (x <= points[0][0]) {
-        return points[0][1];
-      }
-      const p2I = points.findIndex((p) => p[0] >= x);
-      const p2 = points[p2I];
-      const p1 = points[p2I - 1];
-
-      if (!p1 || !p2) {
-        return 0;
-      }
-      const [x1, y1] = p1;
-      const [x2, y2] = p2;
-      return interpolate(x, x1, y1, x2, y2);
-    };
-  };
   // window["interpLin"] = interpLin;
-
-  let brightest = 0.1 + (state.t * 1e-3) / 10;
-  const distToA = interpol(
-    [
-      [0, 1],
-      // [brightest - 0.1, 0.5],
-      [brightest, 1],
-      [brightest + 0.2, 0.5],
-      // [0.4, 0.3],
-      [brightest + 0.5, 0.1],
-      // [0.5, 1],
-      // [1, 0],
-    ],
-    "exp"
-  );
 
   const perdiodToA = interpol(
     [
@@ -216,10 +167,25 @@ const render = ({
 
   ctx.strokeStyle = "white";
 
-  for (let stripeIdx = 0; stripeIdx < 300; stripeIdx++) {
+  for (let stripeIdx = 0; stripeIdx < 200; stripeIdx++) {
     for (const circle of state.circles) {
+      let brightest = 0.1 + (circle.env.t * 1e-3) / 10;
+      const distToA = interpol(
+        [
+          [0, 1],
+          // [brightest - 0.1, 0.5],
+          [brightest, 1],
+          [brightest + 0.2, 0.5],
+          // [0.4, 0.3],
+          [brightest + 0.5, 0.1],
+          // [0.5, 1],
+          // [1, 0],
+        ],
+        "exp"
+      );
+
       let offset = 0.0 * state.t;
-      let width = 0.01 / 6;
+      let width = 0.01 / 3;
       let space = width * (1 + stripeIdx / 200);
       ctx.lineWidth = width * d;
 
@@ -227,19 +193,21 @@ const render = ({
         circle.period === 0
           ? 1
           : perdiodToA(
-              Math.sin(circle.phase + circle.period * state.t * 0.003)
+              Math.sin(circle.phase + circle.period * circle.env.t * 0.003)
             );
 
+      a *= circle.env.value;
+
       const dd = 0;
-      a *= interpol(
-        [
-          [0, 0],
-          [0.1, 1],
-          [0.9, 1],
-          [1, 0],
-        ],
-        "lin"
-      )(state.t / sceneTimeoutMs);
+      // a *= interpol(
+      //   [
+      //     [0, 0],
+      //     [0.1, 1],
+      //     [0.9, 1],
+      //     [1, 0],
+      //   ],
+      //   "lin"
+      // )(state.t / sceneTimeoutMs);
       // console.log(state.t);
 
       // console.log(
@@ -271,13 +239,101 @@ const render = ({
   }
 };
 
+let notesOn = new Set<number>();
+const state = new State();
+
+const getRandomSpawnPoint = () => {
+  return {
+    x: random(0.3, 1 - 0.3),
+    y: random(0.3, 1 - 0.3),
+  };
+};
+let spawn = getRandomSpawnPoint();
+
+const updateState = () => {
+  let removeCircles = new Set<Circle>();
+  for (let circle of state.circles) {
+    if (!notesOn.has(circle.id!) && circle.env.gate) {
+      circle.env.release();
+    }
+    if (!circle.env.gate && circle.env.value < 1e-6) {
+      removeCircles.add(circle);
+    }
+  }
+
+  state.circles = state.circles.filter((c) => !removeCircles.has(c));
+  if (state.circles.length === 0) {
+    state.t = 0;
+  }
+
+  if (notesOn.size === 0) {
+    spawn = getRandomSpawnPoint();
+  }
+};
+
+let socket = new SocketIO({ host: "localhost", port: 9999 });
+socket.socket.on("noteon", (data) => {
+  notesOn.add(data.note);
+
+  let c: Circle;
+  const d = 0.03;
+  const circles = state.circles.filter((c) => c.env.gate);
+
+  console.log("circles.length", circles.length);
+
+  if (circles.length == 1) {
+    const center = circles[0];
+    const a = random(0, 2 * Math.PI);
+    c = state.addRandomCircleAt(
+      center.x + d * Math.cos(a),
+      center.y + d * Math.sin(a),
+      0.1
+    );
+  } else if (circles.length >= 2) {
+    const c1 = circles[0];
+    const c2 = circles[1];
+    const center = {
+      x: (c1.x + c2.x) / 2,
+      y: (c1.y + c2.y) / 2,
+    };
+    const d = dist(c1.x, c1.y, c2.x, c2.y) / 2;
+    const a = random(0, 2 * Math.PI);
+    c = state.addRandomCircleAt(
+      center.x + d * Math.cos(a),
+      center.y + d * Math.sin(a),
+      0.1
+    );
+  } else {
+    const a = random(0, 2 * Math.PI);
+    const center = spawn;
+    c = state.addRandomCircleAt(
+      center.x + d * Math.cos(a),
+      center.y + d * Math.sin(a),
+      0.1
+    );
+  }
+
+  c.phase = 0;
+  c.period = 0;
+  c.id = data.note;
+  updateState();
+  console.log("noteon", data);
+});
+socket.socket.on("noteoff", (data) => {
+  notesOn.delete(data.note);
+  console.log(notesOn, state.circles);
+  updateState();
+
+  console.log("noteoff", data);
+});
+
 export function App() {
   useEffect(() => {
     const canvas = document.getElementById("canvas") as HTMLCanvasElement;
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
 
-    initCanvasCapture(canvas);
+    // initCanvasCapture(canvas);
 
     const randomizeAndRender = () => {
       const state = new State();
@@ -342,11 +398,45 @@ export function App() {
           state,
         });
 
-        CanvasCapture.checkHotkeys();
+        // CanvasCapture.checkHotkeys();
 
         // You need to call recordFrame() only if you are recording
         // a video, gif, or frames.
-        if (CanvasCapture.isRecording()) CanvasCapture.recordFrame();
+        // if (CanvasCapture.isRecording()) CanvasCapture.recordFrame();
+
+        requestAnimationFrame(raf);
+      };
+
+      requestAnimationFrame(raf);
+
+      return () => {
+        stopped = true;
+      };
+    };
+
+    const initAndAnimate = () => {
+      let stopped = false;
+
+      let lastT = performance.now();
+
+      const raf = () => {
+        if (stopped) {
+          return;
+        }
+        const now = performance.now();
+        state.update(now - lastT);
+        // console.log("update");
+        lastT = now;
+        render({
+          to: canvas,
+          state,
+        });
+
+        // CanvasCapture.checkHotkeys();
+
+        // You need to call recordFrame() only if you are recording
+        // a video, gif, or frames.
+        // if (CanvasCapture.isRecording()) CanvasCapture.recordFrame();
 
         requestAnimationFrame(raf);
       };
@@ -362,7 +452,8 @@ export function App() {
 
     const clearAndRenderScene = () => {
       clearScene();
-      const stop = randomizeAndAnimate();
+      // const stop = randomizeAndAnimate();
+      const stop = initAndAnimate();
       clearScene = stop;
     };
 
